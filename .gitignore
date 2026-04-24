@@ -1,0 +1,19 @@
+# Simulator outputs
+qrun.out/
+work/
+reports/
+transcript
+modelsim.ini
+*.log
+*.vcd
+*.wlf
+*.ucdb
+*.jou
+*.pb
+*.wdb
+xsim.dir/
+.vivado/
+
+# OS/editor
+.DS_Store
+.vscode/
