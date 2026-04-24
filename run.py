@@ -40,7 +40,8 @@ TESTS = [
 ]
 
 
-# testbench.sv should include the UVM files.
+# testbench.sv includes the UVM package files.
+# Therefore only design.sv and testbench.sv are passed directly to vlog/qrun.
 SOURCE_FILES = [
     "design.sv",
     "testbench.sv",
@@ -130,11 +131,13 @@ def check_required_files(root):
 
     for name in REQUIRED_FILES:
         path = os.path.join(root, name)
+
         if not os.path.isfile(path):
             missing.append(name)
 
     if missing:
         print("ERROR: Missing required source files:")
+
         for name in missing:
             print("  - " + name)
 
@@ -197,6 +200,13 @@ def run_cmd(cmd, cwd, log_file):
     print("Log file: " + log_file)
     print("")
 
+    env = os.environ.copy()
+
+    # Nobel's cadtools setup may define LD_PRELOAD for Calibre libraries.
+    # ModelSim does not need those preloads, and they create noisy warnings.
+    if "LD_PRELOAD" in env:
+        del env["LD_PRELOAD"]
+
     with open(log_file, "w") as log:
         proc = subprocess.Popen(
             cmd,
@@ -204,6 +214,7 @@ def run_cmd(cmd, cwd, log_file):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
+            env=env,
         )
 
         for line in proc.stdout:
@@ -247,6 +258,8 @@ def summarize(log_file, summary_file):
         r"Syntax error",
         r"Undefined variable",
         r"Unknown option",
+        r"Failed to find",
+        r"Could not find",
     ]
 
     for pattern in fatal_patterns:
@@ -310,15 +323,18 @@ def resolve_simulator(sim_choice):
     if sim_choice == "qrun":
         if qrun:
             return "qrun"
+
         print_simulator_error()
         sys.exit(127)
 
     if sim_choice == "questa":
         if vlog and vsim:
             return "questa"
+
         print_simulator_error()
         sys.exit(127)
 
+    # auto mode
     if qrun:
         return "qrun"
 
@@ -336,13 +352,11 @@ def print_simulator_error():
     print("  1. Questa qrun")
     print("  2. Questa or ModelSim with vlog and vsim")
     print("")
-    print("On Nobel, try checking available modules:")
-    print("  module avail 2>&1 | grep -Ei \"questa|mentor|modelsim|vcs|xcelium|cadence|synopsys\"")
+    print("On Nobel, source the cadtools setup first:")
+    print("  csh")
+    print("  source /import/scripts/cadtools.cshrc")
     print("")
-    print("Then load the available simulator module, for example:")
-    print("  module load questa")
-    print("")
-    print("After loading a module, check:")
+    print("Then check:")
     print("  which qrun")
     print("  which vlog")
     print("  which vsim")
@@ -385,10 +399,13 @@ def build_qrun_command(root, test, seed, coverage, do_file):
 
 def run_questa_flow(root, run_dir, test, seed, coverage, do_file):
     """
-    Classic Questa flow for servers where qrun is unavailable:
+    Classic ModelSim or Questa flow for servers where qrun is unavailable:
       vlib work
       vlog -sv ...
-      vsim -c ...
+      vsim -c -novopt ...
+
+    -novopt is intentional here because Nobel's ModelSim SE 2019.4 showed
+    a vopt design-version failure during optimization.
     """
 
     vlib = find_executable("vlib")
@@ -402,6 +419,7 @@ def run_questa_flow(root, run_dir, test, seed, coverage, do_file):
     if vlib:
         vlib_log = os.path.join(run_dir, "vlib.log")
         ret = run_cmd([vlib, "work"], run_dir, vlib_log)
+
         if ret != 0:
             return ret
 
@@ -424,13 +442,14 @@ def run_questa_flow(root, run_dir, test, seed, coverage, do_file):
 
     vlog_log = os.path.join(run_dir, "vlog.log")
     ret = run_cmd(vlog_cmd, run_dir, vlog_log)
+
     if ret != 0:
         return ret
 
     vsim_cmd = [
         vsim,
         "-c",
-        "-voptargs=+acc=npr",
+        "-novopt",
         "+UVM_TESTNAME=" + test,
         "+ntb_random_seed=" + str(seed),
     ]
@@ -444,6 +463,7 @@ def run_questa_flow(root, run_dir, test, seed, coverage, do_file):
         do_file,
     ])
 
+    # Keep the file name qrun.log so the rest of the script and your grep commands stay consistent.
     vsim_log = os.path.join(run_dir, "qrun.log")
     ret = run_cmd(vsim_cmd, run_dir, vsim_log)
 
